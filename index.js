@@ -2,6 +2,10 @@ import express from "express";
 import fetch from "node-fetch";
 import cors from "cors";
 import "dotenv/config";
+import dns from "dns";
+
+// IPv4'ni ustun qo'yamiz (Node 18+)
+try { dns.setDefaultResultOrder("ipv4first"); } catch {}
 
 const app = express();
 app.use(cors());
@@ -9,11 +13,8 @@ app.use(express.json({ limit: "1mb" }));
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_IDS = String(process.env.TELEGRAM_CHAT_ID || "")
-  .split(",")
-  .map(s => s.trim())
-  .filter(Boolean);
+  .split(",").map(s => s.trim()).filter(Boolean);
 
-// Soddaroq health-check
 app.get("/", (_req, res) => res.json({ ok: true, service: "telegram-order" }));
 
 app.post("/api/telegram-order", async (req, res) => {
@@ -26,72 +27,72 @@ app.post("/api/telegram-order", async (req, res) => {
       return res.status(500).json({ ok: false, error: "Telegram not configured" });
     }
 
-    // --- Matn tayyorlash (MarkdownV2) ---
-    const lines = [
-      "🧾 *Yangi buyurtma*",
-      "",
-      `👤 *Mijoz:* ${escapeMdV2(customer.name)}`,
-      `📞 *Telefon:* ${escapeMdV2(customer.phone)}`,
-      "",
-      "📦 *Buyurtma tarkibi:*",
-      ...items.map((it, i) =>
-        `   ${i + 1}) ${escapeMdV2(it.title)}\n      └ ${it.qty} × ${escapeMdV2(fmt(it.price))} = *${escapeMdV2(fmt(it.subtotal))}*`
-      ),
-      "",
-      `💰 *Jami:* ${escapeMdV2(fmt(total))}`,
-      customer.note ? `🗒 *Izoh:* ${escapeMdV2(customer.note)}` : "",
-      "",
-      `📅 *Sana:* ${escapeMdV2(new Date(createdAt || Date.now()).toLocaleString("uz-UZ"))}`,
-      source ? `\n🔗 *Manba:* ${escapeMdV2(source)}` : ""
-    ].filter(Boolean);
-    const text = lines.join("\n");
+    const text = buildMessage({ customer, items, total, source, createdAt });
 
+    // --- yuborish helperi: timeout + json tekshiruv ---
     const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+    const sendTo = (chat_id) => timedFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id, text, parse_mode: "MarkdownV2", disable_web_page_preview: true }),
+    }, 12000) // 12s timeout
+      .then(async r => ({ httpOk: r.ok, body: await safeJson(r) }))
+      .catch(err => ({ httpOk: false, body: { ok: false, error: String(err?.message || err) } }));
 
-    // Yuborish (har bir chatga), JSON natijani tekshiramiz
-    const sends = CHAT_IDS.map(async (chat_id) => {
-      const r = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id,
-          text,
-          parse_mode: "MarkdownV2",
-          disable_web_page_preview: true
-        })
-      });
-      const body = await r.json().catch(() => ({}));
-      return { httpOk: r.ok, tgOk: !!body.ok, body };
-    });
-
-    const results = await Promise.all(sends);
-    const allOk = results.every(x => x.tgOk);
+    const results = await Promise.all(CHAT_IDS.map(sendTo));
+    const allOk = results.every(r => r.httpOk && r.body?.ok);
 
     if (!allOk) {
-      return res
-        .status(502)
-        .json({ ok: false, error: "telegram send failed", details: results });
+      return res.status(502).json({ ok: false, error: "telegram send failed", details: results });
     }
-
-    res.json({ ok: true });
+    return res.json({ ok: true });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ ok: false, error: "Server error" });
+    return res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
-const PORT = process.env.PORT || 5173;
-app.listen(PORT, () => console.log(`Server started on ${PORT}`));
+const PORT = process.env.PORT || 8080; // DO App Platform uchun 8080
+app.listen(PORT, () => console.log("Server started on", PORT));
 
-function fmt(n) {
-  return new Intl.NumberFormat("uz-UZ").format(Number(n || 0)) + "$";
+/* ===== Helpers ===== */
+function buildMessage({ customer, items, total, source, createdAt }) {
+  const fmt = n => new Intl.NumberFormat("uz-UZ").format(Number(n || 0)) + "$";
+  const e = escapeMdV2;
+  const lines = [
+    "🧾 *Yangi buyurtma*",
+    "",
+    `👤 *Mijoz:* ${e(customer.name)}`,
+    `📞 *Telefon:* ${e(customer.phone)}`,
+    "",
+    "📦 *Buyurtma tarkibi:*",
+    ...items.map((it, i) =>
+      `   ${i + 1}) ${e(it.title)}\n      └ ${it.qty} × ${e(fmt(it.price))} = *${e(fmt(it.subtotal))}*`
+    ),
+    "",
+    `💰 *Jami:* ${e(fmt(total))}`,
+    customer.note ? `🗒 *Izoh:* ${e(customer.note)}` : "",
+    "",
+    `📅 *Sana:* ${e(new Date(createdAt || Date.now()).toLocaleString("uz-UZ"))}`,
+    source ? `🔗 *Manba:* ${e(source)}` : ""
+  ].filter(Boolean);
+  return lines.join("\n");
 }
 
-/**
- * Telegram MarkdownV2 escape
- * Ruxsat etilmagan belgilar: _ * [ ] ( ) ~ ` > # + - = | { } . !
- * Bundan tashqari \ o‘zi ham escape qilinadi
- */
 function escapeMdV2(s = "") {
   return String(s).replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+}
+
+async function timedFetch(url, opts = {}, ms = 10000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(new Error("Fetch timeout")), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ac.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function safeJson(res) {
+  try { return await res.json(); } catch { return {}; }
 }
