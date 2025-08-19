@@ -48,6 +48,8 @@ app.get("/api/tg-selftest", async (_req, res) => {
 app.options("/api/telegram-order", cors());
 
 /* ============ Helpers ============ */
+
+// Valyuta formatlash (UZ locale, oxirida $ belgisi)
 const fmt = n => new Intl.NumberFormat("uz-UZ").format(Number(n || 0)) + "$";
 
 // HTML parse_mode uchun xavfsiz escape
@@ -58,25 +60,35 @@ function escapeHtml(s = "") {
     .replace(/>/g, "&gt;");
 }
 
+// NBSP indent (4 ta no-break space) — &nbsp; EMAS!
+const INDENT = "\u00A0\u00A0\u00A0\u00A0";
+
+// Xabar matnini HTML formatida qurish
 function buildMessageHTML({ customer, items, total, source, createdAt }) {
   const e = escapeHtml;
   const lines = [
     "🧾 <b>Yangi buyurtma</b>",
     "",
-    `👤 <b>Mijoz:</b> ${e(customer.name)}`,
-    `📞 <b>Telefon:</b> ${e(customer.phone)}`,
+    `👤 <b>Mijoz:</b> ${e(customer.name || "")}`,
+    `📞 <b>Telefon:</b> ${e(customer.phone || "")}`,
     "",
     "📦 <b>Buyurtma tarkibi:</b>",
-    ...items.map(it =>
-      `• ${e(it.title)}\n&nbsp;&nbsp;&nbsp;&nbsp;└ ${it.qty} × ${e(fmt(it.price))} = <b>${e(fmt(it.subtotal))}</b>`
-    ),
+    ...items.map(it => {
+      const title = e(it.title || "");
+      const qty = Number(it.qty || 0);
+      const price = fmt(it.price);
+      const subtotal = fmt(it.subtotal ?? (qty * Number(it.price || 0)));
+      return `• ${title}\n${INDENT}└ ${qty} × ${e(price)} = <b>${e(subtotal)}</b>`;
+    }),
     "",
     `💰 <b>Jami:</b> ${e(fmt(total))}`,
-    customer.note ? `🗒 <b>Izoh:</b> ${e(customer.note)}` : "",
+    customer?.note ? `🗒 <b>Izoh:</b> ${e(customer.note)}` : "",
     "",
     `📅 <b>Sana:</b> ${e(new Date(createdAt || Date.now()).toLocaleString("uz-UZ"))}`,
     source ? `🔗 <b>Manba:</b> ${e(source)}` : ""
   ].filter(Boolean);
+
+  // Yakuniy matn
   return lines.join("\n");
 }
 
@@ -84,11 +96,15 @@ function buildMessageHTML({ customer, items, total, source, createdAt }) {
 async function timedFetch(url, opts = {}, ms = 12000) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(new Error("Fetch timeout")), ms);
-  try { return await fetch(url, { ...opts, signal: ac.signal }); }
-  finally { clearTimeout(t); }
+  try {
+    return await fetch(url, { ...opts, signal: ac.signal });
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 // Telegram xabarini bo‘lib yuborish (limit ~4096, xavfsiz 4000)
+// Taglarni buzmaslik uchun bo‘lishni \n bo‘yicha qilamiz.
 function splitTelegramMessage(text, limit = 4000) {
   if (!text || text.length <= limit) return [text];
   const parts = [];
