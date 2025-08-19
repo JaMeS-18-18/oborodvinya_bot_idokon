@@ -5,7 +5,7 @@ import cors from "cors";
 import "dotenv/config";
 import dns from "dns";
 
-// Node 18+ da IPv4'ni afzal qo'yamiz (telegram DNS muammosiz bo'lsin)
+// Telegram DNS/IPv6 muammolarini kamaytirish
 try { dns.setDefaultResultOrder("ipv4first"); } catch {}
 
 /* ============ App ============ */
@@ -17,11 +17,13 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_IDS = String(process.env.TELEGRAM_CHAT_ID || "")
   .split(",").map(s => s.trim()).filter(Boolean);
 
-/* ---- Oddiy request logger ---- */
+/* ---- Request logger ---- */
 app.use((req, res, next) => {
   const start = Date.now();
   res.on("finish", () => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} -> ${res.statusCode} (${Date.now()-start}ms)`);
+    console.log(
+      `[${new Date().toISOString()}] ${req.method} ${req.url} -> ${res.statusCode} (${Date.now()-start}ms)`
+    );
   });
   next();
 });
@@ -30,7 +32,7 @@ app.use((req, res, next) => {
 app.get("/", (_req, res) => res.json({ ok: true, service: "telegram-order" }));
 app.get("/api/ping", (_req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
-// Telegram getMe – tokenga ulana olayaptimi?
+// Bot token to‘g‘riligini tekshirish
 app.get("/api/tg-selftest", async (_req, res) => {
   try {
     if (!BOT_TOKEN) return res.status(500).json({ ok: false, error: "NO_TOKEN" });
@@ -42,33 +44,43 @@ app.get("/api/tg-selftest", async (_req, res) => {
   }
 });
 
-/* ---- OPTIONS (preflight) ni tez qaytarish ---- */
+/* ---- OPTIONS (preflight) ---- */
 app.options("/api/telegram-order", cors());
 
 /* ============ Helpers ============ */
-function escapeMdV2(s = "") { return String(s).replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1"); }
 const fmt = n => new Intl.NumberFormat("uz-UZ").format(Number(n || 0)) + "$";
 
-function buildMessage({ customer, items, total, source, createdAt }) {
-  const e = escapeMdV2;
+// HTML parse_mode uchun xavfsiz escape
+function escapeHtml(s = "") {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function buildMessageHTML({ customer, items, total, source, createdAt }) {
+  const e = escapeHtml;
   const lines = [
-    "🧾 *Yangi buyurtma*",
+    "🧾 <b>Yangi buyurtma</b>",
     "",
-    `👤 *Mijoz:* ${e(customer.name)}`,
-    `📞 *Telefon:* ${e(customer.phone)}`,
+    `👤 <b>Mijoz:</b> ${e(customer.name)}`,
+    `📞 <b>Telefon:</b> ${e(customer.phone)}`,
     "",
-    "📦 *Buyurtma tarkibi:*",
-    ...items.map((it, i) => `   ${i + 1}) ${e(it.title)}\n      └ ${it.qty} × ${e(fmt(it.price))} = *${e(fmt(it.subtotal))}*`),
+    "📦 <b>Buyurtma tarkibi:</b>",
+    ...items.map(it =>
+      `• ${e(it.title)}\n&nbsp;&nbsp;&nbsp;&nbsp;└ ${it.qty} × ${e(fmt(it.price))} = <b>${e(fmt(it.subtotal))}</b>`
+    ),
     "",
-    `💰 *Jami:* ${e(fmt(total))}`,
-    customer.note ? `🗒 *Izoh:* ${e(customer.note)}` : "",
+    `💰 <b>Jami:</b> ${e(fmt(total))}`,
+    customer.note ? `🗒 <b>Izoh:</b> ${e(customer.note)}` : "",
     "",
-    `📅 *Sana:* ${e(new Date(createdAt || Date.now()).toLocaleString("uz-UZ"))}`,
-    source ? `🔗 *Manba:* ${e(source)}` : ""
+    `📅 <b>Sana:</b> ${e(new Date(createdAt || Date.now()).toLocaleString("uz-UZ"))}`,
+    source ? `🔗 <b>Manba:</b> ${e(source)}` : ""
   ].filter(Boolean);
   return lines.join("\n");
 }
 
+// Timeout bilan fetch
 async function timedFetch(url, opts = {}, ms = 12000) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(new Error("Fetch timeout")), ms);
@@ -76,6 +88,7 @@ async function timedFetch(url, opts = {}, ms = 12000) {
   finally { clearTimeout(t); }
 }
 
+// Telegram xabarini bo‘lib yuborish (limit ~4096, xavfsiz 4000)
 function splitTelegramMessage(text, limit = 4000) {
   if (!text || text.length <= limit) return [text];
   const parts = [];
@@ -104,7 +117,7 @@ app.post("/api/telegram-order", async (req, res) => {
       return res.status(500).json({ ok: false, error: "Telegram not configured" });
     }
 
-    const text = buildMessage({ customer, items, total, source, createdAt });
+    const text = buildMessageHTML({ customer, items, total, source, createdAt });
     const chunks = splitTelegramMessage(text);
     const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
 
@@ -116,12 +129,17 @@ app.post("/api/telegram-order", async (req, res) => {
           const r = await timedFetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chat_id, text: chunk, parse_mode: "MarkdownV2", disable_web_page_preview: true })
+            body: JSON.stringify({
+              chat_id,
+              text: chunk,
+              parse_mode: "HTML",
+              disable_web_page_preview: true
+            })
           }, 12000);
           const body = await r.json().catch(() => ({}));
           console.log(` <- response chat_id=${chat_id} http=${r.status} tgOk=${body?.ok}`);
           results.push({ chat_id, httpOk: r.ok, tgOk: !!body.ok, body });
-          if (!(r.ok && body.ok)) break;
+          if (!(r.ok && body.ok)) break; // shu chat uchun xato bo'lsa, qolgan bo'laklarni yubormaymiz
         } catch (err) {
           console.error(" !! send error:", err?.message || err);
           results.push({ chat_id, httpOk: false, tgOk: false, body: { error: String(err?.message || err) } });
@@ -132,7 +150,7 @@ app.post("/api/telegram-order", async (req, res) => {
 
     const allOk = results.every(x => x.httpOk && x.tgOk);
     if (!allOk) {
-      console.log(" -> telegram send failed", JSON.stringify(results).slice(0, 800));
+      console.log(" -> telegram send failed", JSON.stringify(results).slice(0, 900));
       return res.status(502).json({ ok: false, error: "telegram send failed", details: results });
     }
 
@@ -146,7 +164,7 @@ app.post("/api/telegram-order", async (req, res) => {
 
 /* ============ Start ============ */
 const PORT = process.env.PORT || 8080;
-// MUHIM: 0.0.0.0 da tinglash — App Platform tashqi trafikni uzatishi uchun
+// DO App Platform tashqi trafik uchun 0.0.0.0 da tinglaymiz
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server started on ${PORT} | token: ${BOT_TOKEN?.slice(0,6)}... | chats:`, CHAT_IDS);
 });
