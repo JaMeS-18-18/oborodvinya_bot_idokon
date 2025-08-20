@@ -61,7 +61,7 @@ function escapeHtml(s = "") {
 }
 
 // Indent uchun HTML NBSP
-const INDENT = "&nbsp;&nbsp;&nbsp;&nbsp;";
+const INDENT = "\u00A0\u00A0\u00A0\u00A0";
 
 /**
  * Xabar matnini HTML formatida qurish
