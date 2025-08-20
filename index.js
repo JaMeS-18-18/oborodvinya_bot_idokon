@@ -72,36 +72,38 @@ const INDENT = "\u00A0\u00A0\u00A0\u00A0";
 function buildMessageHTML({ customer = {}, items = [], total = 0, plan = null, source, createdAt }) {
   const e = escapeHtml;
 
-  const rows = [
-    "🧾 <b>Yangi buyurtma</b>",
-    "",
-    `👤 <b>Mijoz:</b> ${e(customer.name || "")}`,
-    `📞 <b>Telefon:</b> ${e(customer.phone || "")}`,
-    "",
-    items.length
-      ? "📦 <b>Buyurtma tarkibi (qurilmalar):</b>"
-      : "",
-    ...items.map(it => {
-      const title = e(it.title || "");
-      const qty = Number(it.qty || 0);
-      const price = fmtUZS(it.price);
-      const subtotal = fmtUZS(it.subtotal ?? (qty * Number(it.price || 0)));
-      return `• ${title}\n${INDENT}└ ${qty} × ${e(price)} = <b>${e(subtotal)}</b>`;
-    }),
-    plan ? `\n📝 <b>Tarif:</b> ${e(plan.tag)} — <b>${fmtUZS(plan.priceUZS)}</b> <i>/ oy</i>` : "",
-    "",
-    items.length ? `💰 <b>Qurilmalar jami:</b> ${e(fmtUZS(total))}` : "",
-    plan ? `➕ <b>Abonent to‘lovi:</b> ${fmtUZS(plan.priceUZS)} / oy` : "",
-    plan && items.length
-      ? `📊 <b>Umumiy (birinchi to‘lov):</b> ${fmtUZS((Number(total)||0) + (Number(plan.priceUZS)||0))}`
-      : "",
-    customer.note ? `🗒 <b>Izoh:</b> ${e(customer.note)}` : "",
-    "",
-    `📅 <b>Sana:</b> ${e(new Date(createdAt || Date.now()).toLocaleString("uz-UZ"))}`,
-    source ? `🔗 <b>Manba:</b> ${e(source)}` : ""
-  ].filter(Boolean);
+const rows = [
+  "🧾 <b>Yangi buyurtma</b>",
+  "",
+  `👤 <b>Mijoz:</b> ${e(customer.name || "")}`,
+  `📞 <b>Telefon:</b> ${e(customer.phone || "")}`,
+  "",
+  items.length
+    ? "📦 <b>Buyurtma tarkibi (qurilmalar):</b>"
+    : "",
+  ...items.map(it => {
+    const title = e(it.title || "");
+    const qty = Number(it.qty || 0);
+    const price = fmtUZS(it.price);
+    const subtotal = fmtUZS(it.subtotal ?? (qty * Number(it.price || 0)));
+    return `• ${title}\n${INDENT}└ ${qty} × ${e(price)} = <b>${e(subtotal)}</b>`;
+  }),
+  plan
+    ? `\n📝 <b>Tarif:</b> ${e(plan.tag)} — <b>${fmtUZS(plan.priceUZS)}</b> <i>/ ${plan.cycle === "yearly" ? "yil" : "oy"}</i>`
+    : "",
+  "",
+  items.length ? `💰 <b>Qurilmalar jami:</b> ${e(fmtUZS(total))}` : "",
+  plan && items.length
+    ? `📊 <b>Umumiy (birinchi to‘lov):</b> ${fmtUZS((Number(total)||0) + (Number(plan.priceUZS)||0))}`
+    : "",
+  customer.note ? `🗒 <b>Izoh:</b> ${e(customer.note)}` : "",
+  "",
+  `📅 <b>Sana:</b> ${e(new Date(createdAt || Date.now()).toLocaleString("uz-UZ"))}`,
+  source ? `🔗 <b>Manba:</b> ${e(source)}` : ""
+].filter(Boolean);
 
-  return rows.join("\n");
+return rows.join("\n");
+
 }
 
 // Timeout bilan fetch
