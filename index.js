@@ -49,8 +49,8 @@ app.options("/api/telegram-order", cors());
 
 /* ============ Helpers ============ */
 
-// Valyuta formatlash (UZ locale, oxirida $ belgisi)
-const fmt = n => new Intl.NumberFormat("uz-UZ").format(Number(n || 0)) + "$";
+// Valyuta formatlash (UZ locale, so‘m)
+const fmtUZS = (n) => new Intl.NumberFormat("uz-UZ").format(Number(n || 0)) + " so‘m";
 
 // HTML parse_mode uchun xavfsiz escape
 function escapeHtml(s = "") {
@@ -60,53 +60,48 @@ function escapeHtml(s = "") {
     .replace(/>/g, "&gt;");
 }
 
-// NBSP indent (4 ta no-break space) — &nbsp; EMAS!
-const INDENT = "\u00A0\u00A0\u00A0\u00A0";
+// Indent uchun HTML NBSP
+const INDENT = "&nbsp;&nbsp;&nbsp;&nbsp;";
 
-// Xabar matnini HTML formatida qurish
-function buildMessageHTML({ customer, items, total, source, createdAt }) {
+/**
+ * Xabar matnini HTML formatida qurish
+ * items — qurilmalar (so‘mda)
+ * total — qurilmalar jami (so‘mda)
+ * plan  — { id, tag, priceUZS } bo‘lsa, alohida ko‘rsatiladi
+ */
+function buildMessageHTML({ customer = {}, items = [], total = 0, plan = null, source, createdAt }) {
   const e = escapeHtml;
-function buildMessageHTML({ customer, items, total, plan, source, createdAt }) {
-  const e = escapeHtml;
-  const INDENT = "&nbsp;&nbsp;&nbsp;&nbsp;";
 
-  const lines = [
+  const rows = [
     "🧾 <b>Yangi buyurtma</b>",
     "",
     `👤 <b>Mijoz:</b> ${e(customer.name || "")}`,
     `📞 <b>Telefon:</b> ${e(customer.phone || "")}`,
     "",
-    "📦 <b>Buyurtma tarkibi:</b>",
+    items.length
+      ? "📦 <b>Buyurtma tarkibi (qurilmalar):</b>"
+      : "",
     ...items.map(it => {
       const title = e(it.title || "");
       const qty = Number(it.qty || 0);
-      const price = fmt(it.price);
-      const subtotal = fmt(it.subtotal ?? (qty * Number(it.price || 0)));
+      const price = fmtUZS(it.price);
+      const subtotal = fmtUZS(it.subtotal ?? (qty * Number(it.price || 0)));
       return `• ${title}\n${INDENT}└ ${qty} × ${e(price)} = <b>${e(subtotal)}</b>`;
     }),
-    plan
-      ? `\n📝 <b>Tarif:</b> ${e(plan.tag)} — <b>${fmtUZS(plan.priceUZS)}/oy</b>`
-      : "",
+    plan ? `\n📝 <b>Tarif:</b> ${e(plan.tag)} — <b>${fmtUZS(plan.priceUZS)}</b> <i>/ oy</i>` : "",
     "",
-    `💰 <b>Jami qurilmalar:</b> ${e(fmt(total))}`,
-    plan
-      ? `➕ <b>Abonent to‘lovi:</b> ${fmtUZS(plan.priceUZS)}/oy`
+    items.length ? `💰 <b>Qurilmalar jami:</b> ${e(fmtUZS(total))}` : "",
+    plan ? `➕ <b>Abonent to‘lovi:</b> ${fmtUZS(plan.priceUZS)} / oy` : "",
+    plan && items.length
+      ? `📊 <b>Umumiy (birinchi to‘lov):</b> ${fmtUZS((Number(total)||0) + (Number(plan.priceUZS)||0))}`
       : "",
-    plan
-      ? `📊 <b>Umumiy (birinchi to‘lov):</b> ${fmtUZS(total + plan.priceUZS)}`
-      : "",
-    customer?.note ? `🗒 <b>Izoh:</b> ${e(customer.note)}` : "",
+    customer.note ? `🗒 <b>Izoh:</b> ${e(customer.note)}` : "",
     "",
     `📅 <b>Sana:</b> ${e(new Date(createdAt || Date.now()).toLocaleString("uz-UZ"))}`,
     source ? `🔗 <b>Manba:</b> ${e(source)}` : ""
   ].filter(Boolean);
 
-  return lines.join("\n");
-}
-
-
-  // Yakuniy matn
-  return lines.join("\n");
+  return rows.join("\n");
 }
 
 // Timeout bilan fetch
@@ -121,7 +116,6 @@ async function timedFetch(url, opts = {}, ms = 12000) {
 }
 
 // Telegram xabarini bo‘lib yuborish (limit ~4096, xavfsiz 4000)
-// Taglarni buzmaslik uchun bo‘lishni \n bo‘yicha qilamiz.
 function splitTelegramMessage(text, limit = 4000) {
   if (!text || text.length <= limit) return [text];
   const parts = [];
@@ -140,8 +134,12 @@ function splitTelegramMessage(text, limit = 4000) {
 app.post("/api/telegram-order", async (req, res) => {
   console.log("[REQ] /api/telegram-order payload:", JSON.stringify(req.body).slice(0, 500));
   try {
-    const { customer, items, total, source, createdAt } = req.body || {};
-    if (!customer || !Array.isArray(items) || items.length === 0) {
+    const { customer, items = [], total = 0, plan = null, source, createdAt } = req.body || {};
+
+    // Validatsiya: mijoz bo‘lishi shart; qurilmalar YO tarifdan biri bo‘lishi kerak
+    const hasDevices = Array.isArray(items) && items.length > 0;
+    const hasPlan = !!plan && typeof plan === "object";
+    if (!customer || (!hasDevices && !hasPlan)) {
       console.log(" -> bad payload");
       return res.status(400).json({ ok: false, error: "Bad payload" });
     }
@@ -150,7 +148,7 @@ app.post("/api/telegram-order", async (req, res) => {
       return res.status(500).json({ ok: false, error: "Telegram not configured" });
     }
 
-    const text = buildMessageHTML({ customer, items, total, source, createdAt });
+    const text = buildMessageHTML({ customer, items, total, plan, source, createdAt });
     const chunks = splitTelegramMessage(text);
     const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
 
