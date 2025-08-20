@@ -69,41 +69,39 @@ const INDENT = "\u00A0\u00A0\u00A0\u00A0";
  * total — qurilmalar jami (so‘mda)
  * plan  — { id, tag, priceUZS } bo‘lsa, alohida ko‘rsatiladi
  */
-function buildMessageHTML({ customer = {}, items = [], total = 0, plan = null, source, createdAt }) {
+// buildMessageHTML({... , plan, install, total, grandFirstPaymentUZS, ...})
+function buildMessageHTML({ customer, items, total, plan, install, grandFirstPaymentUZS, source, createdAt }) {
   const e = escapeHtml;
+  const INDENT = "&nbsp;&nbsp;&nbsp;&nbsp;";
 
-const rows = [
-  "🧾 <b>Yangi buyurtma</b>",
-  "",
-  `👤 <b>Mijoz:</b> ${e(customer.name || "")}`,
-  `📞 <b>Telefon:</b> ${e(customer.phone || "")}`,
-  "",
-  items.length
-    ? "📦 <b>Buyurtma tarkibi (qurilmalar):</b>"
-    : "",
-  ...items.map(it => {
-    const title = e(it.title || "");
-    const qty = Number(it.qty || 0);
-    const price = fmtUZS(it.price);
-    const subtotal = fmtUZS(it.subtotal ?? (qty * Number(it.price || 0)));
-    return `• ${title}\n${INDENT}└ ${qty} × ${e(price)} = <b>${e(subtotal)}</b>`;
-  }),
-  plan
-    ? `\n📝 <b>Tarif:</b> ${e(plan.tag)} — <b>${fmtUZS(plan.priceUZS)}</b> <i>/ ${plan.cycle === "yearly" ? "yil" : "oy"}</i>`
-    : "",
-  "",
-  items.length ? `💰 <b>Qurilmalar jami:</b> ${e(fmtUZS(total))}` : "",
-  plan && items.length
-    ? `📊 <b>Umumiy (birinchi to‘lov):</b> ${fmtUZS((Number(total)||0) + (Number(plan.priceUZS)||0))}`
-    : "",
-  customer.note ? `🗒 <b>Izoh:</b> ${e(customer.note)}` : "",
-  "",
-  `📅 <b>Sana:</b> ${e(new Date(createdAt || Date.now()).toLocaleString("uz-UZ"))}`,
-  source ? `🔗 <b>Manba:</b> ${e(source)}` : ""
-].filter(Boolean);
+  const rows = [
+    "🧾 <b>Yangi buyurtma</b>",
+    "",
+    `👤 <b>Mijoz:</b> ${e(customer.name || "")}`,
+    `📞 <b>Telefon:</b> ${e(customer.phone || "")}`,
+    "",
+    items?.length ? "📦 <b>Buyurtma tarkibi (qurilmalar):</b>" : "",
+    ...(items || []).map(it => {
+      const title = e(it.title || "");
+      const qty = Number(it.qty || 0);
+      const price = fmtUZS(it.price);
+      const subtotal = fmtUZS(it.subtotal ?? (qty * Number(it.price || 0)));
+      return `• ${title}\n${INDENT}└ ${qty} × ${e(price)} = <b>${e(subtotal)}</b>`;
+    }),
+    plan ? `\n📝 <b>Tarif:</b> ${e(plan.tag)} — <b>${fmtUZS(plan.priceUZS)}</b> <i>/ ${plan.cycle === 'yearly' ? 'yil' : 'oy'}</i>` : "",
+    install && install.feeUZS > 0 ? `🧩 <b>Ustanovka to‘lovi:</b> ${fmtUZS(install.feeUZS)}` : "",
+    "",
+    items?.length ? `💰 <b>Qurilmalar jami:</b> ${fmtUZS(total)}` : "",
+    (typeof grandFirstPaymentUZS === 'number')
+      ? `📊 <b>Umumiy (birinchi to‘lov):</b> ${fmtUZS(grandFirstPaymentUZS)}`
+      : (plan && items?.length ? `📊 <b>Umumiy (birinchi to‘lov):</b> ${fmtUZS((Number(total)||0) + (Number(plan.priceUZS)||0) + (install?.feeUZS||0))}` : ""),
+    customer?.note ? `🗒 <b>Izoh:</b> ${e(customer.note)}` : "",
+    "",
+    `📅 <b>Sana:</b> ${e(new Date(createdAt || Date.now()).toLocaleString("uz-UZ"))}`,
+    source ? `🔗 <b>Manba:</b> ${e(source)}` : ""
+  ].filter(Boolean);
 
-return rows.join("\n");
-
+  return rows.join("\n");
 }
 
 // Timeout bilan fetch
