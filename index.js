@@ -5,7 +5,7 @@ import cors from "cors";
 import "dotenv/config";
 import dns from "dns";
 
-// Telegram DNS/IPv6 muammolarini kamaytirish
+// IPv6/DNS bilan muammolarni kamaytirish
 try { dns.setDefaultResultOrder("ipv4first"); } catch {}
 
 /* ============ App ============ */
@@ -22,7 +22,7 @@ app.use((req, res, next) => {
   const start = Date.now();
   res.on("finish", () => {
     console.log(
-      `[${new Date().toISOString()}] ${req.method} ${req.url} -> ${res.statusCode} (${Date.now()-start}ms)`
+      `[${new Date().toISOString()}] ${req.method} ${req.url} -> ${res.statusCode} (${Date.now() - start}ms)`
     );
   });
   next();
@@ -60,41 +60,68 @@ function escapeHtml(s = "") {
     .replace(/>/g, "&gt;");
 }
 
-// Indent uchun HTML NBSP
+// Indent (NBSP)
 const INDENT = "\u00A0\u00A0\u00A0\u00A0";
 
 /**
  * Xabar matnini HTML formatida qurish
- * items — qurilmalar (so‘mda)
- * total — qurilmalar jami (so‘mda)
- * plan  — { id, tag, priceUZS } bo‘lsa, alohida ko‘rsatiladi
+ * @param {Object} payload
+ * @param {Object} payload.customer   {name, phone, note}
+ * @param {Array}  payload.items      [{title, qty, price, subtotal}]
+ * @param {number} payload.total      qurilmalar jami (so‘m)
+ * @param {Object} payload.plan       {id, tag, cycle: 'monthly'|'yearly', priceUZS}
+ * @param {Object} payload.install    {feeUZS, cycle, planId}  // ixtiyoriy
+ * @param {number} payload.grandFirstPaymentUZS                // ixtiyoriy; bo‘lmasa hisoblab chiqaramiz
+ * @param {string} payload.source
+ * @param {string} payload.createdAt  ISO
  */
-// buildMessageHTML({... , plan, install, total, grandFirstPaymentUZS, ...})
-function buildMessageHTML({ customer, items, total, plan, install, grandFirstPaymentUZS, source, createdAt }) {
+function buildMessageHTML({
+  customer,
+  items = [],
+  total = 0,
+  plan = null,
+  install = null,
+  grandFirstPaymentUZS,
+  source,
+  createdAt
+}) {
   const e = escapeHtml;
-  const INDENT = "&nbsp;&nbsp;&nbsp;&nbsp;";
+
+  // Birinchi to‘lov (fallback)
+  const computedGrand =
+    (Number(total) || 0) +
+    (Number(plan?.priceUZS) || 0) +
+    (Number(install?.feeUZS) || 0);
+
+  const grandToShow = typeof grandFirstPaymentUZS === "number"
+    ? grandFirstPaymentUZS
+    : computedGrand;
 
   const rows = [
     "🧾 <b>Yangi buyurtma</b>",
     "",
-    `👤 <b>Mijoz:</b> ${e(customer.name || "")}`,
-    `📞 <b>Telefon:</b> ${e(customer.phone || "")}`,
+    `👤 <b>Mijoz:</b> ${e(customer?.name || "")}`,
+    `📞 <b>Telefon:</b> ${e(customer?.phone || "")}`,
     "",
-    items?.length ? "📦 <b>Buyurtma tarkibi (qurilmalar):</b>" : "",
-    ...(items || []).map(it => {
+    items.length ? "📦 <b>Buyurtma tarkibi (qurilmalar):</b>" : "",
+    ...items.map(it => {
       const title = e(it.title || "");
       const qty = Number(it.qty || 0);
       const price = fmtUZS(it.price);
       const subtotal = fmtUZS(it.subtotal ?? (qty * Number(it.price || 0)));
       return `• ${title}\n${INDENT}└ ${qty} × ${e(price)} = <b>${e(subtotal)}</b>`;
     }),
-    plan ? `\n📝 <b>Tarif:</b> ${e(plan.tag)} — <b>${fmtUZS(plan.priceUZS)}</b> <i>/ ${plan.cycle === 'yearly' ? 'yil' : 'oy'}</i>` : "",
-    install && install.feeUZS > 0 ? `🧩 <b>Ustanovka to‘lovi:</b> ${fmtUZS(install.feeUZS)}` : "",
+    plan
+      ? `\n📝 <b>Ta'rif:</b> ${e(plan.tag)} — <b>${fmtUZS(plan.priceUZS)}</b> <i>/ ${plan.cycle === "yearly" ? "yil" : "oy"}</i>`
+      : "",
+    (install && Number(install.feeUZS) > 0)
+      ? `🧩 <b>Ustanovka to‘lovi:</b> ${fmtUZS(install.feeUZS)}`
+      : "",
     "",
-    items?.length ? `💰 <b>Qurilmalar jami:</b> ${fmtUZS(total)}` : "",
-    (typeof grandFirstPaymentUZS === 'number')
-      ? `📊 <b>Umumiy (birinchi to‘lov):</b> ${fmtUZS(grandFirstPaymentUZS)}`
-      : (plan && items?.length ? `📊 <b>Umumiy (birinchi to‘lov):</b> ${fmtUZS((Number(total)||0) + (Number(plan.priceUZS)||0) + (install?.feeUZS||0))}` : ""),
+    items.length ? `💰 <b>Qurilmalar jami:</b> ${fmtUZS(total)}` : "",
+    (plan || (install && Number(install.feeUZS) > 0) || items.length)
+      ? `📊 <b>Umumiy (birinchi to‘lov):</b> ${fmtUZS(grandToShow)}`
+      : "",
     customer?.note ? `🗒 <b>Izoh:</b> ${e(customer.note)}` : "",
     "",
     `📅 <b>Sana:</b> ${e(new Date(createdAt || Date.now()).toLocaleString("uz-UZ"))}`,
@@ -132,11 +159,20 @@ function splitTelegramMessage(text, limit = 4000) {
 
 /* ============ API ============ */
 app.post("/api/telegram-order", async (req, res) => {
-  console.log("[REQ] /api/telegram-order payload:", JSON.stringify(req.body).slice(0, 500));
+  console.log("[REQ] /api/telegram-order payload:", JSON.stringify(req.body).slice(0, 800));
   try {
-    const { customer, items = [], total = 0, plan = null, source, createdAt } = req.body || {};
+    const {
+      customer,
+      items = [],
+      total = 0,
+      plan = null,
+      install = null,              // { feeUZS, cycle, planId } bo‘lishi mumkin
+      grandFirstPaymentUZS,        // ixtiyoriy; jo‘natilsa shu ko‘rsatiladi
+      source,
+      createdAt
+    } = req.body || {};
 
-    // Validatsiya: mijoz bo‘lishi shart; qurilmalar YO tarifdan biri bo‘lishi kerak
+    // Validatsiya: mijoz bo‘lishi shart; qurilmalar YOKI tarifning hech bo‘lmasa bittasi bo‘lsin
     const hasDevices = Array.isArray(items) && items.length > 0;
     const hasPlan = !!plan && typeof plan === "object";
     if (!customer || (!hasDevices && !hasPlan)) {
@@ -148,7 +184,17 @@ app.post("/api/telegram-order", async (req, res) => {
       return res.status(500).json({ ok: false, error: "Telegram not configured" });
     }
 
-    const text = buildMessageHTML({ customer, items, total, plan, source, createdAt });
+    const text = buildMessageHTML({
+      customer,
+      items,
+      total,
+      plan,
+      install,
+      grandFirstPaymentUZS,
+      source,
+      createdAt
+    });
+
     const chunks = splitTelegramMessage(text);
     const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
 
@@ -195,7 +241,6 @@ app.post("/api/telegram-order", async (req, res) => {
 
 /* ============ Start ============ */
 const PORT = process.env.PORT || 8080;
-// DO App Platform tashqi trafik uchun 0.0.0.0 da tinglaymiz
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server started on ${PORT} | token: ${BOT_TOKEN?.slice(0,6)}... | chats:`, CHAT_IDS);
 });
