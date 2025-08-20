@@ -66,6 +66,10 @@ const INDENT = "\u00A0\u00A0\u00A0\u00A0";
 // Xabar matnini HTML formatida qurish
 function buildMessageHTML({ customer, items, total, source, createdAt }) {
   const e = escapeHtml;
+function buildMessageHTML({ customer, items, total, plan, source, createdAt }) {
+  const e = escapeHtml;
+  const INDENT = "&nbsp;&nbsp;&nbsp;&nbsp;";
+
   const lines = [
     "🧾 <b>Yangi buyurtma</b>",
     "",
@@ -80,13 +84,26 @@ function buildMessageHTML({ customer, items, total, source, createdAt }) {
       const subtotal = fmt(it.subtotal ?? (qty * Number(it.price || 0)));
       return `• ${title}\n${INDENT}└ ${qty} × ${e(price)} = <b>${e(subtotal)}</b>`;
     }),
+    plan
+      ? `\n📝 <b>Tarif:</b> ${e(plan.tag)} — <b>${fmtUZS(plan.priceUZS)}/oy</b>`
+      : "",
     "",
-    `💰 <b>Jami:</b> ${e(fmt(total))}`,
+    `💰 <b>Jami qurilmalar:</b> ${e(fmt(total))}`,
+    plan
+      ? `➕ <b>Abonent to‘lovi:</b> ${fmtUZS(plan.priceUZS)}/oy`
+      : "",
+    plan
+      ? `📊 <b>Umumiy (birinchi to‘lov):</b> ${fmtUZS(total + plan.priceUZS)}`
+      : "",
     customer?.note ? `🗒 <b>Izoh:</b> ${e(customer.note)}` : "",
     "",
     `📅 <b>Sana:</b> ${e(new Date(createdAt || Date.now()).toLocaleString("uz-UZ"))}`,
     source ? `🔗 <b>Manba:</b> ${e(source)}` : ""
   ].filter(Boolean);
+
+  return lines.join("\n");
+}
+
 
   // Yakuniy matn
   return lines.join("\n");
