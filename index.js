@@ -6,7 +6,7 @@ import "dotenv/config";
 import dns from "dns";
 
 // IPv6/DNS bilan muammolarni kamaytirish
-try { dns.setDefaultResultOrder("ipv4first"); } catch {}
+try { dns.setDefaultResultOrder("ipv4first"); } catch { }
 
 /* ============ App ============ */
 const app = express();
@@ -239,8 +239,59 @@ app.post("/api/telegram-order", async (req, res) => {
   }
 });
 
+/* ================== Contact form API ================== */
+// POST /api/contact
+// Body misol: { name: "Ali", phone: "+998901234567", message: "Salom, ..."}
+app.post("/api/contact", async (req, res) => {
+  console.log("[REQ] /api/contact payload:", JSON.stringify(req.body).slice(0, 500));
+  try {
+    const { name, phone, message } = req.body || {};
+    if (!name || !phone || !message) {
+      return res.status(400).json({ ok: false, error: "Missing fields" });
+    }
+    if (!BOT_TOKEN || CHAT_IDS.length === 0) {
+      return res.status(500).json({ ok: false, error: "Telegram not configured" });
+    }
+
+    // Xabar matni
+    const text =
+      `📩 <b>Yangi murojaat</b>\n\n` +
+      `👤 <b>Ism:</b> ${escapeHtml(name)}\n` +
+      `📞 <b>Telefon:</b> ${escapeHtml(phone)}\n` +
+      `🗒 <b>Xabar:</b>\n${escapeHtml(message)}\n\n` +
+      `⏰ ${new Date().toLocaleString("uz-UZ")}`;
+
+    // Telegramga yuborish
+    const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+    const results = [];
+    for (const chat_id of CHAT_IDS) {
+      const r = await timedFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id,
+          text,
+          parse_mode: "HTML",
+          disable_web_page_preview: true
+        })
+      }, 12000);
+      const body = await r.json().catch(() => ({}));
+      results.push({ chat_id, httpOk: r.ok, tgOk: !!body.ok });
+    }
+
+    const allOk = results.every(r => r.httpOk && r.tgOk);
+    if (!allOk) return res.status(502).json({ ok: false, error: "Telegram send failed", details: results });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("contact error", err);
+    res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+
 /* ============ Start ============ */
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 8090;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server started on ${PORT} | token: ${BOT_TOKEN?.slice(0,6)}... | chats:`, CHAT_IDS);
+  console.log(`Server started on ${PORT} | token: ${BOT_TOKEN?.slice(0, 6)}... | chats:`, CHAT_IDS);
 });
